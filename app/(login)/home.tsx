@@ -1,46 +1,69 @@
-import React, { useState } from 'react';
-import { FlatList, StyleSheet, Text, View, TextInput, Alert, TouchableOpacity } from 'react-native';
-import auth from '@react-native-firebase/auth';
-import Feather from 'react-native-vector-icons/Feather';
-import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
-import AddButton from '../../components/AddButton';
+import React, { useEffect, useState } from 'react';
+import { FlatList, StyleSheet, Text, View, TextInput, Alert, TouchableOpacity, Keyboard } from 'react-native';
+import ActionButton from '../../components/AddButton';
 import LoggedUser from '../../components/LoggedUser';
+import { supabase } from '../lib/supabaseClient';
+import { Ionicons } from '@expo/vector-icons';
 
 const Page = () => {
-  const user = auth().currentUser;
-
-  const [tarefas, setTarefas] = useState([
-    { id: 1, titulo: "Tarefa 0001" },
-    { id: 2, titulo: "Tarefa 0002" },
-    { id: 3, titulo: "Tarefa 0003" },
-    { id: 4, titulo: "Tarefa 0004" },
-    { id: 5, titulo: "Tarefa 0005" }
-  ]);
-
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [tarefas, setTarefas] = useState<{ id: number; titulo: string }[]>([]);
   const [input, setInput] = useState('');
   const [editandoId, setEditandoId] = useState<number | null>(null);
 
-  const handleAddOrEdit = () => {
+  useEffect(() => {
+    getUser();
+    fetchTarefas();
+  }, []);
+
+  const getUser = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    setUserEmail(user?.email ?? null);
+  };
+
+  const fetchTarefas = async () => {
+    const { data, error } = await supabase
+      .from('tarefas')
+      .select('*')
+      .order('id', { ascending: true });
+
+    if (error) {
+      Alert.alert('Erro ao buscar tarefas', error.message);
+    } else if (data) {
+      setTarefas(data);
+    }
+  };
+
+  const handleAddOrEdit = async () => {
     if (input.trim() === '') {
       Alert.alert('Erro', 'Digite um título para a tarefa');
       return;
     }
 
+    Keyboard.dismiss();
+
     if (editandoId !== null) {
-      // Editar tarefa
-      setTarefas(prev =>
-        prev.map(item =>
-          item.id === editandoId ? { ...item, titulo: input } : item
-        )
-      );
-      setEditandoId(null);
+      const { error } = await supabase
+        .from('tarefas')
+        .update({ titulo: input })
+        .eq('id', editandoId);
+
+      if (error) {
+        Alert.alert('Erro ao editar', error.message);
+      } else {
+        await fetchTarefas();
+        setEditandoId(null);
+      }
     } else {
-      // Adicionar nova tarefa
-      const novaTarefa = {
-        id: tarefas.length + 1,
-        titulo: input,
-      };
-      setTarefas(prev => [...prev, novaTarefa]);
+      const { error } = await supabase
+        .from('tarefas')
+        .insert([{ titulo: input, user_email: userEmail }]);
+
+      if (error) {
+        Alert.alert('Erro ao adicionar', error.message);
+      } else {
+        await fetchTarefas();
+      }
     }
 
     setInput('');
@@ -51,19 +74,34 @@ const Page = () => {
     setEditandoId(id);
   };
 
-  const excluirTarefa = (id: number) => {
-    setTarefas(prev => prev.filter(item => item.id !== id));
+  const excluirTarefa = async (id: number) => {
+    const { error } = await supabase
+      .from('tarefas')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      Alert.alert('Erro ao excluir', error.message);
+    } else {
+      await fetchTarefas();
+    }
   };
 
   const renderItem = ({ item }: { item: { id: number; titulo: string } }) => (
     <View style={styles.item}>
-      <Text>{item.titulo}</Text>
+      <Text style={styles.itemText}>{item.titulo}</Text>
       <View style={styles.buttons}>
-        <TouchableOpacity style={styles.iconButton} onPress={() => iniciarEdicao(item.id, item.titulo)}>
-          <Feather name="edit-2" size={20} color="#2E5AAC" />
+        <TouchableOpacity 
+          style={[styles.actionButton, styles.editButton]}
+          onPress={() => iniciarEdicao(item.id, item.titulo)}
+        >
+          <Ionicons name="pencil" size={18} color="#fff" />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.iconButton} onPress={() => excluirTarefa(item.id)}>
-          <MaterialIcons name="delete" size={20} color="#D11A2A" />
+        <TouchableOpacity 
+          style={[styles.actionButton, styles.deleteButton]}
+          onPress={() => excluirTarefa(item.id)}
+        >
+          <Ionicons name="trash" size={18} color="#fff" />
         </TouchableOpacity>
       </View>
     </View>
@@ -71,22 +109,44 @@ const Page = () => {
 
   return (
     <View style={styles.container}>
-      <Text>Bem-vindo {user?.email}</Text>
-      <LoggedUser />
+      <View style={styles.header}>
+        <Text style={styles.welcomeText}>Bem-vindo,</Text>
+        <Text style={styles.userEmail}>{userEmail ?? 'Usuário'}</Text>
+        <LoggedUser />
+      </View>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Digite o nome da tarefa"
-        value={input}
-        onChangeText={setInput}
-      />
-
-      <AddButton onPress={handleAddOrEdit} />
+      <View style={styles.inputContainer}>
+        <TextInput
+          style={styles.input}
+          placeholder="Digite o nome da tarefa..."
+          placeholderTextColor="#999"
+          value={input}
+          onChangeText={setInput}
+          onSubmitEditing={handleAddOrEdit}
+        />
+        <TouchableOpacity 
+          style={styles.addButton} 
+          onPress={handleAddOrEdit}
+        >
+          <Ionicons 
+            name={editandoId !== null ? "checkmark" : "add"} 
+            size={24} 
+            color="#fff" 
+          />
+        </TouchableOpacity>
+      </View>
 
       <FlatList
         data={tarefas}
         keyExtractor={(item) => item.id.toString()}
         renderItem={renderItem}
+        contentContainerStyle={styles.listContent}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <Ionicons name="list" size={50} color="#6c5ce7" />
+            <Text style={styles.emptyText}>Nenhuma tarefa encontrada</Text>
+          </View>
+        }
       />
     </View>
   );
@@ -95,34 +155,108 @@ const Page = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: 22,
-    paddingHorizontal: 10,
+    backgroundColor: '#f8f9fa',
+    paddingHorizontal: 20,
+    paddingTop: 40,
+  },
+  header: {
+    marginBottom: 30,
+  },
+  welcomeText: {
+    fontSize: 24,
+    fontWeight: '300',
+    color: '#333',
+  },
+  userEmail: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#6c5ce7',
+    marginBottom: 10,
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    marginBottom: 20,
+  },
+  input: {
+    flex: 1,
+    backgroundColor: '#fff',
+    padding: 15,
+    borderRadius: 10,
+    fontSize: 16,
+    color: '#333',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  addButton: {
+    backgroundColor: '#6c5ce7',
+    width: 50,
+    height: 50,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 10,
+    shadowColor: '#6c5ce7',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
   },
   item: {
-    padding: 10,
-    marginVertical: 5,
-    backgroundColor: '#f9f9f9',
-    borderRadius: 8,
+    backgroundColor: '#fff',
+    padding: 20,
+    marginBottom: 15,
+    borderRadius: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    borderLeftWidth: 4,
+    borderLeftColor: '#6c5ce7',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  itemText: {
+    fontSize: 16,
+    color: '#333',
+    flex: 1,
   },
   buttons: {
     flexDirection: 'row',
     gap: 10,
   },
-  iconButton: {
-    backgroundColor: '#f0f0f0',
-    padding: 8,
-    borderRadius: 25,
-    elevation: 2,
+  actionButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ccc',
-    padding: 8,
-    marginVertical: 10,
-    borderRadius: 5,
+  editButton: {
+    backgroundColor: '#00b894',
+  },
+  deleteButton: {
+    backgroundColor: '#d63031',
+  },
+  listContent: {
+    paddingBottom: 20,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 50,
+  },
+  emptyText: {
+    fontSize: 18,
+    color: '#999',
+    marginTop: 15,
   },
 });
 
